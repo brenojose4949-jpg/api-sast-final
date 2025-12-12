@@ -94,7 +94,7 @@ app.get('/users/:id', (req, res) => {
     res.json(results.rows);
   });
 });
-
+//adgagds
 // VULNERABILIDADE: SQL Injection no login
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
