@@ -14,7 +14,7 @@ permissions:
   packages: write
 
 env:
-  REGISTRY_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/api-sast
+  REGISTRY_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/api-sast-final
   SONAR_HOST_URL: https://sonarcloud.io
 
 jobs:
