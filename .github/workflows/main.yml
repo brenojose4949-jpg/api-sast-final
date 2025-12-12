@@ -1,0 +1,93 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/api-sast
+  SONAR_HOST_URL: https://sonarcloud.io
+
+jobs:
+  build-test-scan-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+
+      - name: Install
+        run: npm install
+
+      - name: Testes
+        run: npm test
+
+      - name: SAST - SonarCloud
+        id: sonarcloud
+        uses: SonarSource/sonarcloud-github-action@v2
+        continue-on-error: true
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+        with:
+          projectBaseDir: .
+
+      - name: Calcular versão e tag
+        id: versioning
+        run: |
+          git fetch --tags
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          IFS='.' read -r major minor patch <<<"${latest_tag#v}"
+          patch=$((patch+1))
+          new_version="v${major}.${minor}.${patch}"
+          echo "NEW_VERSION=${new_version}" >> $GITHUB_ENV
+          git tag "${new_version}"
+          git push origin "${new_version}"
+
+      - name: Docker login
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Build Docker
+        env:
+          NEW_VERSION: ${{ env.NEW_VERSION }}
+        run: |
+          docker build -t "${{ env.REGISTRY_IMAGE }}:${NEW_VERSION}" .
+          docker tag "${{ env.REGISTRY_IMAGE }}:${NEW_VERSION}" "${{ env.REGISTRY_IMAGE }}:latest"
+
+      - name: Push Docker
+        env:
+          NEW_VERSION: ${{ env.NEW_VERSION }}
+        run: |
+          docker push "${{ env.REGISTRY_IMAGE }}:${NEW_VERSION}"
+          docker push "${{ env.REGISTRY_IMAGE }}:latest"
+
+      - name: Deploy Render
+        env:
+          NEW_VERSION: ${{ env.NEW_VERSION }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          if [ -z "${RENDER_SERVICE_ID}" ]; then
+            echo "RENDER_SERVICE_ID não configurado" >&2
+            exit 1
+          fi
+          curl -X POST "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"clearCache\":true,\"image\":\"${{ env.REGISTRY_IMAGE }}:${NEW_VERSION}\"}"
